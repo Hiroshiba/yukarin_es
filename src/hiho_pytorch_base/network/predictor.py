@@ -14,85 +14,88 @@ class Predictor(nn.Module):
 
     def __init__(
         self,
-        feature_vector_size: int,
-        feature_variable_size: int,
+        phoneme_size: int,
+        phoneme_embedding_size: int,
         hidden_size: int,
-        target_vector_size: int,
         speaker_size: int,
         speaker_embedding_size: int,
         encoder: Encoder,
     ):
         super().__init__()
 
-        self.speaker_embedder = nn.Embedding(speaker_size, speaker_embedding_size)
+        self.hidden_size = hidden_size
 
-        input_size = feature_variable_size + speaker_embedding_size
-        self.pre_conformer = nn.Linear(input_size, hidden_size)
+        # TODO: 推論時は行列演算を焼き込める。精度的にdoubleにする必要があるかも
+        self.phoneme_embedder = nn.Sequential(
+            nn.Embedding(phoneme_size, phoneme_embedding_size),
+            nn.Linear(phoneme_embedding_size, phoneme_embedding_size),
+            nn.Linear(phoneme_embedding_size, phoneme_embedding_size),
+            nn.Linear(phoneme_embedding_size, phoneme_embedding_size),
+            nn.Linear(phoneme_embedding_size, phoneme_embedding_size),
+        )
+
+        # TODO: 推論時は行列演算を焼き込める。精度的にdoubleにする必要があるかも
+        self.speaker_embedder = nn.Sequential(
+            nn.Embedding(speaker_size, speaker_embedding_size),
+            nn.Linear(speaker_embedding_size, speaker_embedding_size),
+            nn.Linear(speaker_embedding_size, speaker_embedding_size),
+            nn.Linear(speaker_embedding_size, speaker_embedding_size),
+            nn.Linear(speaker_embedding_size, speaker_embedding_size),
+        )
+
+        # Conformer前の写像
+        embedding_size = phoneme_embedding_size
+        self.pre_conformer = nn.Linear(
+            embedding_size + speaker_embedding_size, hidden_size
+        )
+
         self.encoder = encoder
 
-        self.feature_vector_processor = nn.Linear(feature_vector_size, hidden_size)
-        self.vector_head = nn.Linear(hidden_size * 2, target_vector_size)
-        self.variable_head = nn.Linear(hidden_size, target_vector_size)
-        self.scalar_head = nn.Linear(hidden_size * 2, 1)
+        # 出力ヘッド - 音素長予測用
+        self.duration_head = nn.Linear(hidden_size, 1)
 
     def forward(  # noqa: D102
         self,
         *,
-        feature_vector: Tensor,  # (B, ?)
-        feature_variable_list: list[Tensor],  # [(vL, ?)]
+        phoneme_id_list: list[Tensor],  # [(L,)]
         speaker_id: Tensor,  # (B,)
-    ) -> tuple[Tensor, list[Tensor], Tensor]:  # (B, ?), [(vL, ?)], (B,)
-        device = feature_vector.device
-        batch_size = feature_vector.size(0)
+    ) -> list[Tensor]:  # duration_list [(L,)]
+        device = speaker_id.device
+        batch_size = len(phoneme_id_list)
 
-        lengths = torch.tensor(
-            [var_data.shape[0] for var_data in feature_variable_list], device=device
+        # シーケンスをパディング
+        phoneme_lengths = torch.tensor(
+            [seq.shape[0] for seq in phoneme_id_list], device=device
         )
+        padded_phoneme_ids = pad_sequence(phoneme_id_list, batch_first=True)  # (B, L)
 
-        if batch_size == 1:
-            # NOTE: ONNX化の際にpad_sequenceがエラーになるため迂回
-            padded_variable = feature_variable_list[0].unsqueeze(0)  # (1, L, ?)
-        else:
-            padded_variable = pad_sequence(
-                feature_variable_list, batch_first=True
-            )  # (B, L, ?)
+        # 埋め込み
+        phoneme_embed = self.phoneme_embedder(padded_phoneme_ids)  # (B, L, ?)
 
-        speaker_embedding = self.speaker_embedder(speaker_id)  # (B, ?)
-
-        max_length = padded_variable.size(1)
-        speaker_expanded = speaker_embedding.unsqueeze(1).expand(
+        # 話者埋め込み
+        speaker_embed = self.speaker_embedder(speaker_id)  # (B, ?)
+        max_length = padded_phoneme_ids.size(1)
+        speaker_embed = speaker_embed.unsqueeze(1).expand(
             batch_size, max_length, -1
         )  # (B, L, ?)
 
-        combined_variable = torch.cat(
-            [padded_variable, speaker_expanded], dim=2
-        )  # (B, L, ?)
+        # 埋め込みを結合
+        h = torch.cat([phoneme_embed, speaker_embed], dim=2)  # (B, L, ?)
 
-        h = self.pre_conformer(combined_variable)  # (B, L, ?)
+        # Conformer前の投影
+        h = self.pre_conformer(h)  # (B, L, ?)
 
-        mask = make_non_pad_mask(lengths).unsqueeze(-2).to(device)  # (B, 1, L)
+        # マスキング
+        mask = make_non_pad_mask(phoneme_lengths).unsqueeze(-2).to(device)  # (B, 1, L)
 
-        encoded, _ = self.encoder(x=h, cond=None, mask=mask)  # (B, L, ?)
+        # Conformerエンコーダ
+        h, _ = self.encoder(x=h, cond=None, mask=mask)  # (B, L, ?)
 
-        variable_features = self.variable_head(encoded)  # (B, L, ?)
+        # 出力ヘッド - 全音素に対して継続時間を予測
+        duration = self.duration_head(h).squeeze(-1)  # (B, L)
 
-        mask_expanded = mask.squeeze(-2).unsqueeze(-1)  # (B, L, 1)
-        masked_encoded = encoded * mask_expanded  # (B, L, ?)
-        variable_sum = masked_encoded.sum(dim=1)  # (B, ?)
-        variable_mean = variable_sum / lengths.unsqueeze(-1).float()  # (B, ?)
-
-        fixed_features = self.feature_vector_processor(feature_vector)  # (B, ?)
-
-        final_features = torch.cat([fixed_features, variable_mean], dim=1)  # (B, ?)
-
-        vector_output = self.vector_head(final_features)  # (B, ?)
-        scalar_output = self.scalar_head(final_features).squeeze(-1)  # (B,)
-
-        variable_output_list = [
-            variable_features[i, :length] for i, length in enumerate(lengths)
-        ]
-
-        return vector_output, variable_output_list, scalar_output
+        # 音素長をリストで返す
+        return [duration[i, :length] for i, length in enumerate(phoneme_lengths)]
 
 
 def create_predictor(config: NetworkConfig) -> Predictor:
@@ -112,10 +115,9 @@ def create_predictor(config: NetworkConfig) -> Predictor:
         feed_forward_kernel_size=3,
     )
     return Predictor(
-        feature_vector_size=config.feature_vector_size,
-        feature_variable_size=config.feature_variable_size,
+        phoneme_size=config.phoneme_size,
+        phoneme_embedding_size=config.phoneme_embedding_size,
         hidden_size=config.hidden_size,
-        target_vector_size=config.target_vector_size,
         speaker_size=config.speaker_size,
         speaker_embedding_size=config.speaker_embedding_size,
         encoder=encoder,

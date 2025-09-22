@@ -6,18 +6,14 @@ import numpy
 import torch
 from torch import Tensor
 
-from hiho_pytorch_base.data.sampling_data import SamplingData
+from hiho_pytorch_base.data.phoneme import ArpaPhoneme
 
 
 @dataclass
 class InputData:
     """データ処理前のデータ構造"""
 
-    feature_vector: numpy.ndarray
-    feature_variable: numpy.ndarray
-    target_vector: SamplingData
-    target_variable: SamplingData
-    target_scalar: float
+    phonemes: list[ArpaPhoneme]
     speaker_id: int
 
 
@@ -25,38 +21,25 @@ class InputData:
 class OutputData:
     """データ処理後のデータ構造"""
 
-    feature_vector: Tensor
-    feature_variable: Tensor
-    target_vector: Tensor
-    target_variable: Tensor
-    target_scalar: Tensor
+    phoneme_id: Tensor  # (L,) 音素ID
+    phoneme_duration: Tensor  # (L,) 音素継続時間
     speaker_id: Tensor
 
 
-def preprocess(
-    d: InputData, *, frame_rate: float, frame_length: int, is_eval: bool
-) -> OutputData:
-    """データ処理"""
-    variable_scalar = numpy.mean(d.feature_variable)
-    enhanced_feature = d.feature_vector + variable_scalar
-
-    if not is_eval:
-        enhanced_feature += (
-            numpy.random.default_rng().normal(size=enhanced_feature.shape) * 0.01
-        )
-
-    resampled_vector_data = d.target_vector.resample(
-        sampling_rate=frame_rate, length=frame_length
+def preprocess(d: InputData, is_eval: bool) -> OutputData:
+    """全ての変換・検証・配列化処理を統合"""
+    # 音素情報の抽出
+    phoneme_ids = numpy.array(
+        [ArpaPhoneme.phoneme_list.index(p.phoneme) for p in d.phonemes],
+        dtype=numpy.int32,
     )
-    target_class = numpy.bincount(resampled_vector_data[:, 0]).argmax()
+    phoneme_durations = numpy.array(
+        [p.duration for p in d.phonemes], dtype=numpy.float32
+    )
 
-    target_sequence = d.target_variable.array.astype(numpy.float32)
-
+    # Tensor変換
     return OutputData(
-        feature_vector=torch.from_numpy(enhanced_feature).float(),
-        feature_variable=torch.from_numpy(d.feature_variable).float(),
-        target_vector=torch.tensor(target_class).long(),
-        target_variable=torch.from_numpy(target_sequence).float(),
-        target_scalar=torch.tensor(d.target_scalar).float(),
+        phoneme_id=torch.from_numpy(phoneme_ids).long(),
+        phoneme_duration=torch.from_numpy(phoneme_durations).float(),
         speaker_id=torch.tensor(d.speaker_id).long(),
     )

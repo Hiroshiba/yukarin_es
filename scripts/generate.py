@@ -74,8 +74,7 @@ def generate(
     for batch in tqdm(data_loader, desc="generate"):
         batch.to_device(device="cuda" if use_gpu else "cpu", non_blocking=True)
         _ = generator(
-            feature_vector=batch.feature_vector,
-            feature_variable_list=batch.feature_variable_list,
+            phoneme_id_list=batch.phoneme_id_list,
             speaker_id=batch.speaker_id,
         )
 

@@ -6,14 +6,13 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import assert_never
 
-import numpy
 from pydantic import TypeAdapter
 from torch.utils.data import Dataset as BaseDataset
 from upath import UPath
 
 from hiho_pytorch_base.config import DataFileConfig, DatasetConfig
 from hiho_pytorch_base.data.data import InputData, OutputData, preprocess
-from hiho_pytorch_base.data.sampling_data import SamplingData
+from hiho_pytorch_base.data.phoneme import ArpaPhoneme
 from hiho_pytorch_base.utility.upath_utility import to_local_path
 
 
@@ -21,27 +20,13 @@ from hiho_pytorch_base.utility.upath_utility import to_local_path
 class LazyInputData:
     """遅延読み込み対応の入力データ構造"""
 
-    feature_vector_path: UPath
-    feature_variable_path: UPath
-    target_vector_path: UPath
-    target_variable_path: UPath
-    target_scalar_path: UPath
+    lab_path: UPath
     speaker_id: int
 
     def fetch(self) -> InputData:
         """ファイルからデータを読み込んでInputDataを生成"""
         return InputData(
-            feature_vector=numpy.load(
-                to_local_path(self.feature_vector_path), allow_pickle=True
-            ),
-            feature_variable=numpy.load(
-                to_local_path(self.feature_variable_path), allow_pickle=True
-            ),
-            target_vector=SamplingData.load(to_local_path(self.target_vector_path)),
-            target_variable=SamplingData.load(to_local_path(self.target_variable_path)),
-            target_scalar=float(
-                numpy.load(to_local_path(self.target_scalar_path), allow_pickle=True)
-            ),
+            phonemes=ArpaPhoneme.load_julius_list(to_local_path(self.lab_path)),
             speaker_id=self.speaker_id,
         )
 
@@ -79,8 +64,6 @@ class Dataset(BaseDataset[OutputData]):
         try:
             return preprocess(
                 self.datas[i].fetch(),
-                frame_rate=self.config.frame_rate,
-                frame_length=self.config.frame_length,
                 is_eval=self.is_eval,
             )
         except Exception as e:
@@ -176,24 +159,9 @@ def get_data_paths(
 
 def get_datas(config: DataFileConfig) -> list[LazyInputData]:
     """データを取得"""
-    (
-        fn_list,
-        (
-            feature_vector_pathmappings,
-            feature_variable_pathmappings,
-            target_vector_pathmappings,
-            target_variable_pathmappings,
-            target_scalar_pathmappings,
-        ),
-    ) = get_data_paths(
+    fn_list, (lab_pathmappings,) = get_data_paths(
         config.root_dir,
-        [
-            config.feature_vector_pathlist_path,
-            config.feature_variable_pathlist_path,
-            config.target_vector_pathlist_path,
-            config.target_variable_pathlist_path,
-            config.target_scalar_pathlist_path,
-        ],
+        [config.lab_pathlist_path],
     )
 
     fn_each_speaker = TypeAdapter(dict[str, list[str]]).validate_json(
@@ -207,11 +175,7 @@ def get_datas(config: DataFileConfig) -> list[LazyInputData]:
 
     datas = [
         LazyInputData(
-            feature_vector_path=feature_vector_pathmappings[fn],
-            feature_variable_path=feature_variable_pathmappings[fn],
-            target_vector_path=target_vector_pathmappings[fn],
-            target_variable_path=target_variable_pathmappings[fn],
-            target_scalar_path=target_scalar_pathmappings[fn],
+            lab_path=lab_pathmappings[fn],
             speaker_id=speaker_ids[fn],
         )
         for fn in fn_list

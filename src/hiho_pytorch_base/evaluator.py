@@ -5,6 +5,7 @@ from typing import Self
 
 import torch
 from torch import Tensor, nn
+from torch.nn.functional import mse_loss
 
 from hiho_pytorch_base.batch import BatchOutput
 from hiho_pytorch_base.generator import Generator, GeneratorOutput
@@ -17,18 +18,16 @@ class EvaluatorOutput(DataNumProtocol):
     """評価値"""
 
     loss: Tensor
-    accuracy: Tensor
 
     def detach_cpu(self) -> Self:
         """全てのTensorをdetachしてCPUに移動"""
         self.loss = detach_cpu(self.loss)
-        self.accuracy = detach_cpu(self.accuracy)
         return self
 
 
 def calculate_value(output: EvaluatorOutput) -> Tensor:
     """評価値の良し悪しを計算する関数。高いほど良い。"""
-    return output.accuracy
+    return -1 * output.loss
 
 
 class Evaluator(nn.Module):
@@ -41,24 +40,19 @@ class Evaluator(nn.Module):
     @torch.no_grad()
     def forward(self, batch: BatchOutput) -> EvaluatorOutput:
         """データをネットワークに入力して評価値を計算する"""
-        target = batch.target_vector  # (B,)
-
         output_result: GeneratorOutput = self.generator(
-            feature_vector=batch.feature_vector,
-            feature_variable_list=batch.feature_variable_list,
+            phoneme_id_list=batch.phoneme_id_list,
             speaker_id=batch.speaker_id,
         )
 
-        output = output_result.vector_output  # (B, ?)
+        # 予測結果とターゲットを結合して一括計算
+        pred_duration_all = torch.cat(output_result.duration, dim=0)  # (sum(L),)
+        target_duration_all = torch.cat(batch.phoneme_duration_list, dim=0)  # (sum(L),)
 
-        loss = torch.nn.functional.cross_entropy(output, target)
-
-        indexes = torch.argmax(output, dim=1)  # (B,)
-        correct = torch.eq(indexes, target).view(-1)  # (B,)
-        accuracy = correct.float().mean()
+        # 音素継続時間損失
+        loss = mse_loss(pred_duration_all, target_duration_all)
 
         return EvaluatorOutput(
             loss=loss,
-            accuracy=accuracy,
             data_num=batch.data_num,
         )

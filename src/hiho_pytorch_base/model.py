@@ -5,7 +5,7 @@ from typing import Self
 
 import torch
 from torch import Tensor, nn
-from torch.nn.functional import cross_entropy, mse_loss
+from torch.nn.functional import mse_loss
 
 from hiho_pytorch_base.batch import BatchOutput
 from hiho_pytorch_base.config import ModelConfig
@@ -21,30 +21,14 @@ class ModelOutput(DataNumProtocol):
     loss: Tensor
     """逆伝播させる損失"""
 
-    loss_vector: Tensor
-    loss_variable: Tensor
-    loss_scalar: Tensor
-    accuracy: Tensor
+    duration_loss: Tensor
+    """音素継続時間損失"""
 
     def detach_cpu(self) -> Self:
         """全てのTensorをdetachしてCPUに移動"""
         self.loss = detach_cpu(self.loss)
-        self.loss_vector = detach_cpu(self.loss_vector)
-        self.loss_variable = detach_cpu(self.loss_variable)
-        self.loss_scalar = detach_cpu(self.loss_scalar)
-        self.accuracy = detach_cpu(self.accuracy)
+        self.duration_loss = detach_cpu(self.duration_loss)
         return self
-
-
-def accuracy(
-    output: Tensor,  # (B, ?)
-    target: Tensor,  # (B,)
-) -> Tensor:
-    """分類精度を計算"""
-    with torch.no_grad():
-        indexes = torch.argmax(output, dim=1)  # (B,)
-        correct = torch.eq(indexes, target).view(-1)  # (B,)
-        return correct.float().mean()
 
 
 class Model(nn.Module):
@@ -57,32 +41,20 @@ class Model(nn.Module):
 
     def forward(self, batch: BatchOutput) -> ModelOutput:
         """データをネットワークに入力して損失などを計算する"""
-        (
-            vector_output,  # (B, ?)
-            variable_output_list,  # [(L, ?)]
-            scalar_output,  # (B,)
-        ) = self.predictor(
-            feature_vector=batch.feature_vector,
-            feature_variable_list=batch.feature_variable_list,
+        duration_output_list = self.predictor(
+            phoneme_id_list=batch.phoneme_id_list,
             speaker_id=batch.speaker_id,
-        )
+        )  # [(L,)]
 
-        target_vector = batch.target_vector  # (B,)
-        variable_output = torch.cat(variable_output_list)
-        target_variable = torch.cat(batch.target_variable_list)
-        target_scalar = batch.target_scalar  # (B,)
+        # 一括で損失計算
+        pred_duration_all = torch.cat(duration_output_list, dim=0)  # (sum(L),)
+        target_duration_all = torch.cat(batch.phoneme_duration_list, dim=0)  # (sum(L),)
 
-        loss_vector = cross_entropy(vector_output, target_vector)
-        loss_variable = mse_loss(variable_output, target_variable)
-        loss_scalar = mse_loss(scalar_output, target_scalar)
-        total_loss = loss_vector + loss_variable + loss_scalar
-        acc = accuracy(vector_output, target_vector)
+        # 音素継続時間損失
+        duration_loss = mse_loss(pred_duration_all, target_duration_all)
 
         return ModelOutput(
-            loss=total_loss,
-            loss_vector=loss_vector,
-            loss_variable=loss_variable,
-            loss_scalar=loss_scalar,
-            accuracy=acc,
+            loss=duration_loss,
+            duration_loss=duration_loss,
             data_num=batch.data_num,
         )

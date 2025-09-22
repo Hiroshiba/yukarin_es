@@ -17,9 +17,7 @@ TensorLike = Tensor | numpy.ndarray
 class GeneratorOutput:
     """生成したデータ"""
 
-    vector_output: Tensor  # (B, ?)
-    variable_output_list: list[Tensor]  # [(L, ?)]
-    scalar_output: Tensor  # (B,)
+    duration: list[Tensor]  # [(L,)]
 
 
 def to_tensor(array: TensorLike, device: torch.device) -> Tensor:
@@ -59,32 +57,21 @@ class Generator(nn.Module):
     def forward(
         self,
         *,
-        feature_vector: TensorLike,  # (B, ?)
-        feature_variable_list: list[TensorLike],  # [(vL, ?)]
+        phoneme_id_list: list[Tensor],  # [(L,)]
         speaker_id: TensorLike,  # (B,)
     ) -> GeneratorOutput:
         """生成経路で推論する"""
 
         def _convert(
-            data: TensorLike | list[TensorLike],
-        ):
-            if isinstance(data, list):
-                return [to_tensor(item, self.device) for item in data]
-            else:
-                return to_tensor(data, self.device)
+            data: TensorLike,
+        ) -> Tensor:
+            return to_tensor(data, self.device)
 
-        (
-            vector_output,  # (B, ?)
-            variable_output_list,  # [(L, ?)]
-            scalar_output,  # (B,)
-        ) = self.predictor(
-            feature_vector=_convert(feature_vector),
-            feature_variable_list=_convert(feature_variable_list),
+        duration_output_list = self.predictor(
+            phoneme_id_list=phoneme_id_list,
             speaker_id=_convert(speaker_id),
-        )
+        )  # [(L,)]
 
         return GeneratorOutput(
-            vector_output=vector_output,
-            variable_output_list=variable_output_list,
-            scalar_output=scalar_output,
+            duration=duration_output_list,  # [(L,)]
         )
