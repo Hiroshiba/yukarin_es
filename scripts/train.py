@@ -286,25 +286,29 @@ def train_one_epoch(context: TrainingContext) -> TrainingResults:
     if hasattr(context.optimizer, "train"):
         context.optimizer.train()  # type: ignore
 
+    gradient_accumulation = context.config.train.gradient_accumulation
+    context.optimizer.zero_grad()  # NOTE: 端数分の勾配を消す
+
     batch: BatchOutput
     train_results: list[ModelOutput] = []
-    for batch in context.train_loader:
-        context.iteration += 1
 
+    for batch_index, batch in enumerate(context.train_loader, start=1):
         with autocast(context.device, enabled=context.config.train.use_amp):
             batch = batch.to_device(context.device, non_blocking=True)
             result: ModelOutput = context.model(batch)
 
-        loss = result.loss
+        loss = result.loss / gradient_accumulation
         if loss.isnan():
             raise ValueError("loss is NaN")
 
-        context.optimizer.zero_grad()
         context.scaler.scale(loss).backward()
-        context.scaler.step(context.optimizer)
-        context.scaler.update()
-
         train_results.append(result.detach_cpu())
+
+        if batch_index % gradient_accumulation == 0:
+            context.scaler.step(context.optimizer)
+            context.scaler.update()
+            context.optimizer.zero_grad()
+            context.iteration += 1
 
     if context.scheduler is not None:
         context.scheduler.step()
@@ -406,6 +410,7 @@ def training_loop(context: TrainingContext) -> None:
         if should_log_epoch(context):
             summary = {
                 "iteration": context.iteration,
+                "epoch": context.epoch,
                 "lr": context.optimizer.param_groups[0]["lr"],
             }
             summary.update(training_results.to_summary_dict())

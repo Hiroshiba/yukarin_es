@@ -55,6 +55,7 @@ class TrainConfig(_Model):
     """学習の設定"""
 
     batch_size: int
+    gradient_accumulation: int = 1
     eval_batch_size: int
     log_epoch: int
     eval_epoch: int
