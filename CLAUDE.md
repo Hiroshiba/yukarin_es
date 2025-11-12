@@ -136,11 +136,12 @@ uv run pyright && uv run ruff check --fix && uv run ruff format
 
 ### パッケージ名の変更方法
 
-フォーク先で別のパッケージ名（例: `my_ml_project`）として配布する場合、`pyproject.toml` を以下のように変更します：
+パッケージ名を`hiho_pytorch_base`から必ず変更します。
+フォーク先で別のパッケージ名（例: `repository_name`）として配布する場合、`pyproject.toml` を以下のように変更します：
 
 ```toml
 [tool.hatch.build.targets.wheel.sources]
-"src/hiho_pytorch_base" = "my_ml_project"
+"src/hiho_pytorch_base" = "repository_name"
 ```
 
 ---
