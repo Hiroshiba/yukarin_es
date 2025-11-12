@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from upath import UPath
 
 from hiho_pytorch_base.config import Config
 from scripts.export_onnx import export_onnx
@@ -17,7 +18,7 @@ def test_export_onnx_basic(train_config: Config, tmp_path: Path) -> None:
     with config_path.open("w") as f:
         yaml.dump(train_config.to_dict(), f)
 
-    export_onnx(config_path, output_path, verbose=False)
+    export_onnx(UPath(config_path), output_path, verbose=False)
 
     assert output_path.exists()
 
@@ -28,4 +29,4 @@ def test_export_onnx_with_missing_config_file(tmp_path: Path) -> None:
     output_path = tmp_path / "test_model.onnx"
 
     with pytest.raises(FileNotFoundError):
-        export_onnx(config_path, output_path, verbose=False)
+        export_onnx(UPath(config_path), output_path, verbose=False)

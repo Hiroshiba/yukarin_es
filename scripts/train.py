@@ -1,9 +1,11 @@
 """機械学習モデルの学習メインスクリプト"""
 
 import argparse
+import os
 import threading
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +14,7 @@ import yaml
 from torch.amp.autocast_mode import autocast
 from torch.amp.grad_scaler import GradScaler
 from torch.utils.data import DataLoader, Dataset, Sampler
+from upath import UPath
 
 from hiho_pytorch_base.batch import BatchOutput, collate_dataset_output
 from hiho_pytorch_base.config import Config
@@ -35,6 +38,7 @@ from hiho_pytorch_base.utility.train_utility import (
     SaveManager,
     reduce_result,
 )
+from hiho_pytorch_base.utility.upath_utility import to_local_path
 
 
 def _delete_data_num(output: DataNumProtocol) -> dict[str, Any]:
@@ -132,26 +136,32 @@ def create_data_loader(
         sampler = None
         shuffle = True
 
+    num_workers = config.train.preprocess_workers
+    if num_workers is None:
+        num_workers = os.cpu_count()
+        if num_workers is None:
+            raise ValueError("Failed to get CPU count")
+
     return DataLoader(
         dataset=dataset,
         batch_size=batch_size,
         shuffle=shuffle,
         sampler=sampler,
-        num_workers=config.train.preprocess_workers,
+        num_workers=num_workers,
         collate_fn=collate_dataset_output,
         pin_memory=config.train.use_gpu,
         drop_last=for_train,
-        timeout=0 if config.train.preprocess_workers == 0 else 30,
-        persistent_workers=config.train.preprocess_workers > 0,
+        timeout=0 if num_workers == 0 else 30,
+        persistent_workers=num_workers > 0,
     )
 
 
-def setup_training_context(config_yaml_path: Path, output_dir: Path) -> TrainingContext:
+def setup_training_context(
+    config_yaml_path: UPath, output_dir: Path
+) -> TrainingContext:
     """TrainingContextを作成"""
     # config
-    with config_yaml_path.open() as f:
-        config_dict = yaml.safe_load(f)
-    config = Config.from_dict(config_dict)
+    config = Config.from_dict(yaml.safe_load(config_yaml_path.read_text()))
     config.add_git_info()
     config.validate_config()
 
@@ -160,11 +170,17 @@ def setup_training_context(config_yaml_path: Path, output_dir: Path) -> Training
 
     # prefetch
     train_indices = torch.randperm(len(datasets.train)).tolist()
-    datas = datasets.train.datas + datasets.test.datas
-    datas += datasets.eval.datas if datasets.eval is not None else []
-    datas += datasets.valid.datas if datasets.valid is not None else []
     threading.Thread(
-        target=prefetch_datas, args=(datas, config.train.prefetch_workers), daemon=True
+        target=partial(
+            prefetch_datas,
+            train_datas=datasets.train.datas,
+            test_datas=datasets.test.datas,
+            valid_datas=datasets.valid.datas if datasets.valid is not None else None,
+            train_indices=train_indices,
+            train_batch_size=config.train.batch_size,
+            num_prefetch=config.train.prefetch_workers,
+        ),
+        daemon=True,
     ).start()
 
     # data loader
@@ -198,7 +214,7 @@ def setup_training_context(config_yaml_path: Path, output_dir: Path) -> Training
     device = "cuda" if config.train.use_gpu else "cpu"
     if config.train.pretrained_predictor_path is not None:
         state_dict = torch.load(
-            config.train.pretrained_predictor_path, map_location=device
+            to_local_path(config.train.pretrained_predictor_path), map_location=device
         )
         predictor.load_state_dict(state_dict)
     print("predictor:", predictor)
@@ -222,7 +238,7 @@ def setup_training_context(config_yaml_path: Path, output_dir: Path) -> Training
 
     # logger
     logger = Logger(
-        config_dict=config_dict,
+        config_dict=config.to_dict(),
         project_category=config.project.category,
         project_name=config.project.name,
         output_dir=output_dir,
@@ -298,7 +314,7 @@ def train_one_epoch(context: TrainingContext) -> TrainingResults:
             result: ModelOutput = context.model(batch)
 
         loss = result.loss / gradient_accumulation
-        if loss.isnan():
+        if not loss.isfinite():
             raise ValueError("loss is NaN")
 
         context.scaler.scale(loss).backward()
@@ -426,7 +442,7 @@ def training_loop(context: TrainingContext) -> None:
             save_checkpoint(context)
 
 
-def train(config_yaml_path: Path, output_dir: Path) -> None:
+def train(config_yaml_path: UPath, output_dir: Path) -> None:
     """機械学習モデルを学習する。スナップショットがあれば再開する。"""
     context = setup_training_context(config_yaml_path, output_dir)
 
@@ -434,8 +450,7 @@ def train(config_yaml_path: Path, output_dir: Path) -> None:
         load_snapshot(context)
 
     output_dir.mkdir(exist_ok=True, parents=True)
-    with (output_dir / "config.yaml").open(mode="w") as f:
-        yaml.safe_dump(context.config.to_dict(), f)
+    (output_dir / "config.yaml").write_text(yaml.safe_dump(context.config.to_dict()))
 
     try:
         training_loop(context)
@@ -445,6 +460,6 @@ def train(config_yaml_path: Path, output_dir: Path) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("config_yaml_path", type=Path)
+    parser.add_argument("config_yaml_path", type=UPath)
     parser.add_argument("output_dir", type=Path)
     train(**vars(parser.parse_args()))

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from upath import UPath
 
 from hiho_pytorch_base.config import Config
 from hiho_pytorch_base.dataset import DatasetType, create_dataset
@@ -52,7 +53,7 @@ def test_model_creation(train_config: Config) -> None:
     assert hasattr(model, "forward")
 
 
-def test_e2e_train(train_config: Config, train_output_dir: Path) -> None:
+def test_e2e_train(train_config: Config, train_output_dir: UPath) -> None:
     """学習のe2eテスト"""
     output_dir = train_output_dir / "trained_model"
     if output_dir.exists():
@@ -72,7 +73,7 @@ def test_e2e_train(train_config: Config, train_output_dir: Path) -> None:
     assert len(predictor_files) > 0
 
 
-def test_e2e_generate(train_output_dir: Path, tmp_path: Path) -> None:
+def test_e2e_generate(train_output_dir: UPath, tmp_path: Path) -> None:
     """生成のe2eテスト"""
     trained_model_dir = train_output_dir / "trained_model"
     if not trained_model_dir.exists():
@@ -88,6 +89,7 @@ def test_e2e_generate(train_output_dir: Path, tmp_path: Path) -> None:
         dataset_type=DatasetType.EVAL,
         output_dir=generate_output_dir,
         use_gpu=False,
+        num_files=None,
     )
 
     assert generate_output_dir.exists()

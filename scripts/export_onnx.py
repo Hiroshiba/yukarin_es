@@ -6,6 +6,7 @@ from pathlib import Path
 import torch
 import yaml
 from torch import Tensor, nn
+from upath import UPath
 
 from hiho_pytorch_base.config import Config
 from hiho_pytorch_base.network.predictor import Predictor, create_predictor
@@ -30,14 +31,11 @@ class PredictorWrapper(nn.Module):
         return duration_list[0]
 
 
-def export_onnx(config_yaml_path: Path, output_path: Path, verbose: bool) -> None:
+def export_onnx(config_yaml_path: UPath, output_path: Path, verbose: bool) -> None:
     """設定からPredictorを作成してONNX形式でエクスポートする"""
     output_path.parent.mkdir(exist_ok=True, parents=True)
 
-    with config_yaml_path.open() as f:
-        config_dict = yaml.safe_load(f)
-
-    config = Config.from_dict(config_dict)
+    config = Config.from_dict(yaml.safe_load(config_yaml_path.read_text()))
 
     predictor = create_predictor(config.network)
     wrapper = PredictorWrapper(predictor)
@@ -72,7 +70,7 @@ def export_onnx(config_yaml_path: Path, output_path: Path, verbose: bool) -> Non
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("config_yaml_path", type=Path)
+    parser.add_argument("config_yaml_path", type=UPath)
     parser.add_argument("output_path", type=Path)
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
     export_onnx(**vars(parser.parse_args()))

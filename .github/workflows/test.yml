@@ -38,7 +38,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: <Test> Dockerイメージをビルド
-        run: docker build -t hiho-pytorch-base .
+        run: docker build -t hiho_pytorch_base .
 
       - name: <Test> Dockerイメージを確認
-        run: docker images hiho-pytorch-base
+        run: docker images hiho_pytorch_base

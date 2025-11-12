@@ -1,1 +1,1 @@
-# hiho-pytorch-base
+# hiho_pytorch_base

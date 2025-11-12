@@ -20,6 +20,7 @@ import numpy as np
 import soundfile as sf
 import yaml
 from matplotlib.figure import Figure
+from upath import UPath
 
 from hiho_pytorch_base.config import Config
 from hiho_pytorch_base.data.data import OutputData
@@ -108,17 +109,16 @@ def extract_audio_segment(audio_path: Path, start_time: float, end_time: float) 
 class VisualizationApp:
     """可視化アプリケーション"""
 
-    def __init__(self, config_path: Path, initial_dataset_type: DatasetType):
+    def __init__(self, config_path: UPath, initial_dataset_type: DatasetType):
         self.config_path = config_path
         self.initial_dataset_type = initial_dataset_type
 
-        self.dataset_collection = self._load_dataset()
+        self.dataset_collection = self._create_dataset()
         self.figure_state = FigureState()
 
-    def _load_dataset(self) -> DatasetCollection:
-        """データセットを読み込み"""
-        with self.config_path.open() as f:
-            config = Config.from_dict(yaml.safe_load(f))
+    def _create_dataset(self) -> DatasetCollection:
+        """データセットを作成"""
+        config = Config.from_dict(yaml.safe_load(self.config_path.read_text()))
         return create_dataset(config.dataset)
 
     def _get_dataset_and_data(
@@ -499,7 +499,7 @@ LABデータパス: {lazy_data.lab_path}
         demo.launch(share=False, server_name="0.0.0.0", server_port=7860)
 
 
-def visualize(config_path: Path, dataset_type: DatasetType) -> None:
+def visualize(config_path: UPath, dataset_type: DatasetType) -> None:
     """指定されたデータセットをGradio UIで可視化する"""
     app = VisualizationApp(config_path, dataset_type)
     app.launch()
@@ -509,7 +509,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="音素長予測データセットのビジュアライゼーション"
     )
-    parser.add_argument("config_path", type=Path, help="設定ファイルのパス")
+    parser.add_argument("config_path", type=UPath, help="設定ファイルのパス")
     parser.add_argument(
         "--dataset_type",
         type=DatasetType,

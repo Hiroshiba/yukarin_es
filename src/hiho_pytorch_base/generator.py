@@ -7,8 +7,8 @@ import numpy
 import torch
 from torch import Tensor, nn
 
-from hiho_pytorch_base.config import Config
-from hiho_pytorch_base.network.predictor import Predictor, create_predictor
+from .config import Config
+from .network.predictor import Predictor, create_predictor
 
 TensorLike = Tensor | numpy.ndarray
 

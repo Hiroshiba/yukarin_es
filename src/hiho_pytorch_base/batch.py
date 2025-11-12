@@ -6,8 +6,8 @@ from typing import Self
 import torch
 from torch import Tensor
 
-from hiho_pytorch_base.data.data import OutputData
-from hiho_pytorch_base.utility.pytorch_utility import to_device
+from .data.data import OutputData
+from .utility.pytorch_utility import to_device
 
 
 @dataclass

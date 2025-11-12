@@ -48,7 +48,7 @@ def train_config(data_and_config: Config) -> Config:
 
 
 @pytest.fixture(scope="session")
-def train_output_dir(output_data_dir: Path) -> Path:
+def train_output_dir(output_data_dir: UPath) -> UPath:
     """学習結果ディレクトリのパス"""
     output_dir = output_data_dir / "train_output"
     output_dir.mkdir(parents=True, exist_ok=True)

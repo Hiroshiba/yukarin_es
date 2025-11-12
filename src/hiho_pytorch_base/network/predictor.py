@@ -4,9 +4,9 @@ import torch
 from torch import Tensor, nn
 from torch.nn.utils.rnn import pad_sequence
 
-from hiho_pytorch_base.config import NetworkConfig
-from hiho_pytorch_base.network.conformer.encoder import Encoder
-from hiho_pytorch_base.network.transformer.utility import make_non_pad_mask
+from ..config import NetworkConfig
+from .conformer.encoder import Encoder
+from .transformer.utility import make_non_pad_mask
 
 
 class Predictor(nn.Module):
